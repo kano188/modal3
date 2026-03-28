@@ -1,5 +1,4 @@
 import os
-import shutil
 import subprocess
 import threading
 import requests
@@ -11,27 +10,25 @@ app = Flask(__name__)
 
 # ===== 環境變數 =====
 FILE_PATH = './tmp'
-UUID = os.environ.get('UUID', 'd0c62998-a0d9-4504-b9c4-6ad0d511e8c7')
+UUID = os.environ.get('UUID', '70cb60c0-ed32-4db1-a147-fb4714c75b17')
 
-# Argo
-ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', modal3.future13800.eu.org)
+ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', 'modal3.future13800.eu.org')
 ARGO_AUTH = os.environ.get('ARGO_AUTH', 'eyJhIjoiNjc0MmMxNDI5ZDE4OTA3NjMzZjMyZjQ2MWM5MzUwOWMiLCJ0IjoiMGVhZWQzNjktNDE4MC00ZjMwLTkzZWUtZjQ1OTJjNzU1NTRjIiwicyI6IlpERXpZVFkwT0RFdE5tRmpaQzAwTTJNeUxUaGhOakV0WVRNd1pHTTRaVEUzWm1NdyJ9')
-ARGO_PORT = int(os.environ.get('ARGO_PORT', 8001))  # Argo端口，固定隧道token请改回8080或在cf后台设置的端口与这里对应
+ARGO_PORT = int(os.environ.get('ARGO_PORT', 8001))  # Argo端口
 
-# 哪吒
 NEZHA_SERVER = os.environ.get('NEZHA_SERVER', 'nezha.babiq.eu.org')
 NEZHA_PORT = os.environ.get('NEZHA_PORT', '443')
 NEZHA_KEY = os.environ.get('NEZHA_KEY', 'QgaPOAwrqFaLcy0JQ6')
 
 os.makedirs(FILE_PATH, exist_ok=True)
 
-# ===== 下載 =====
-def download(url, path):
-    with requests.get(url, stream=True) as r:
-        with open(path, 'wb') as f:
-            shutil.copyfileobj(r.raw, f)
+# ===== 下載（無 unzip 版本）=====
+def download_file(url, path):
+    r = requests.get(url)
+    with open(path, 'wb') as f:
+        f.write(r.content)
 
-# ===== Xray 配置（已正確對接 ARGO_PORT + WS）=====
+# ===== Xray 配置 =====
 def generate_config():
     config = {
         "log": {"loglevel": "warning"},
@@ -55,81 +52,71 @@ def generate_config():
     with open(f"{FILE_PATH}/config.json", "w") as f:
         json.dump(config, f, indent=2)
 
-# ===== 下載核心 =====
+# ===== 安裝核心（不解壓版）=====
 def setup_core():
-    print("[INFO] Downloading core...")
+    print("[INFO] Installing core...")
 
-    # Xray
-    download(
-        "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip",
-        f"{FILE_PATH}/xray.zip"
+    # Xray（直接下載 binary）
+    download_file(
+        "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64",
+        f"{FILE_PATH}/xray"
     )
-    subprocess.run(["unzip", "-o", "xray.zip"], cwd=FILE_PATH)
-    subprocess.run(["chmod", "+x", "xray"], cwd=FILE_PATH)
+    os.chmod(f"{FILE_PATH}/xray", 0o755)
 
-    # cloudflared
-    download(
+    # Argo
+    download_file(
         "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
         f"{FILE_PATH}/cloudflared"
     )
-    subprocess.run(["chmod", "+x", "cloudflared"], cwd=FILE_PATH)
+    os.chmod(f"{FILE_PATH}/cloudflared", 0o755)
 
     # 哪吒
     if NEZHA_SERVER and NEZHA_PORT and NEZHA_KEY:
-        download(
-            "https://github.com/naiba/nezha/releases/latest/download/nezha-agent_linux_amd64.zip",
-            f"{FILE_PATH}/nezha.zip"
+        download_file(
+            "https://github.com/naiba/nezha/releases/latest/download/nezha-agent_linux_amd64",
+            f"{FILE_PATH}/nezha-agent"
         )
-        subprocess.run(["unzip", "-o", "nezha.zip"], cwd=FILE_PATH)
-        subprocess.run(["chmod", "+x", "nezha-agent"], cwd=FILE_PATH)
+        os.chmod(f"{FILE_PATH}/nezha-agent", 0o755)
 
-# ===== 啟動 Xray =====
+# ===== 啟動 =====
 def run_xray():
-    print(f"[INFO] Starting Xray on port {ARGO_PORT} ...")
-    subprocess.Popen(["./xray", "-config", "config.json"], cwd=FILE_PATH)
+    print("[INFO] Starting Xray...")
+    subprocess.Popen([f"{FILE_PATH}/xray", "-config", f"{FILE_PATH}/config.json"])
 
-# ===== 啟動 Argo =====
 def run_argo():
-    print(f"[INFO] Starting Argo -> localhost:{ARGO_PORT}")
-
-    if ARGO_AUTH and ARGO_DOMAIN:
-        subprocess.Popen([
-            "./cloudflared", "tunnel",
-            "--token", ARGO_AUTH
-        ], cwd=FILE_PATH)
+    print("[INFO] Starting Argo...")
+    if ARGO_AUTH:
+        subprocess.Popen([f"{FILE_PATH}/cloudflared", "tunnel", "--token", ARGO_AUTH])
     else:
         subprocess.Popen([
-            "./cloudflared", "tunnel",
-            "--url", f"http://localhost:{ARGO_PORT}",
-            "--no-autoupdate"
-        ], cwd=FILE_PATH)
+            f"{FILE_PATH}/cloudflared",
+            "tunnel",
+            "--url", f"http://localhost:{ARGO_PORT}"
+        ])
 
-# ===== 啟動 哪吒 =====
 def run_nezha():
     if NEZHA_SERVER and NEZHA_PORT and NEZHA_KEY:
         print("[INFO] Starting Nezha...")
         subprocess.Popen([
-            "./nezha-agent",
+            f"{FILE_PATH}/nezha-agent",
             "-s", f"{NEZHA_SERVER}:{NEZHA_PORT}",
             "-p", NEZHA_KEY
-        ], cwd=FILE_PATH)
-    else:
-        print("[INFO] Nezha not configured")
+        ])
 
 # ===== 保活 =====
 def keep_alive():
     while True:
-        print("[KEEPALIVE]", time.strftime('%Y-%m-%d %H:%M:%S'))
+        print("[KEEPALIVE]", time.strftime('%H:%M:%S'))
         time.sleep(60)
 
-# ===== Web =====
+# ===== Web（防退出關鍵）=====
 @app.route("/")
 def home():
-    return f"✅ Running (Port: {ARGO_PORT})"
+    return "OK"
 
 # ===== 主入口 =====
 if __name__ == "__main__":
-    print("🚀 Starting full stack...")
+    print("🚀 Starting...")
 
     try:
         setup_core()
@@ -141,10 +128,7 @@ if __name__ == "__main__":
     except Exception as e:
         print("ERROR:", e)
 
-    # 保活
-    t = threading.Thread(target=keep_alive)
-    t.daemon = True
-    t.start()
+    threading.Thread(target=keep_alive, daemon=True).start()
 
-    # 阻塞（關鍵）
+    # ⚠️ 關鍵：前台阻塞
     app.run(host="0.0.0.0", port=8000)

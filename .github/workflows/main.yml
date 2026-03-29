@@ -3,7 +3,8 @@ name: Deploy to Modal
 on:
   workflow_dispatch:
   schedule:
-    - cron: '38 18 * * *'  # 每天 26 点
+    - cron: '38 18 * * *'  # 每天 18:38 UTC
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -12,7 +13,7 @@ jobs:
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      MODAL_CONFIG_DIR: /home/runner/.modal  # 强制写入 Modal CLI 配置目录
+      # ❌ 已删除 MODAL_CONFIG_DIR
 
     steps:
       - name: Checkout code
@@ -29,13 +30,10 @@ jobs:
       - name: Check Modal version
         run: python -c "import modal; print(modal.__version__)"
 
-      - name: Inject Modal Token
+      # ✅ 替换这里（核心修复）
+      - name: Setup Modal Auth
         run: |
-          mkdir -p $MODAL_CONFIG_DIR
-          echo -e "[default]" > $MODAL_CONFIG_DIR/token.toml
-          echo -e "token_id = \"$MODAL_TOKEN_ID\"" >> $MODAL_CONFIG_DIR/token.toml
-          echo -e "token_secret = \"$MODAL_TOKEN_SECRET\"" >> $MODAL_CONFIG_DIR/token.toml
-          
+          modal token set --token-id $MODAL_TOKEN_ID --token-secret $MODAL_TOKEN_SECRET
 
       - name: Run app remotely
         run: python deploy.py --sandbox
@@ -47,7 +45,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 如果 time.txt 不存在，说明是第一次运行
           if [ ! -f time.txt ]; then
             echo "首次生成时间：$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
           else
@@ -56,7 +53,6 @@ jobs:
 
           git add time.txt
 
-          # 如果有更改再提交
           if git diff --cached --quiet; then
             echo "无变化，无需提交"
           else

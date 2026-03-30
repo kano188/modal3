@@ -56,7 +56,7 @@ def run_in_sandbox():
         app=app,
         image=image,
         timeout=86400,                    # 24小時
-        region="ap-northeast-3",
+        region="ap-northeast-2",
         # idle_timeout=1800,              # 可選：1小時無活動自動停止
     )
 

@@ -1,19 +1,17 @@
-name: Deploy to Modal (ai-inferbox Sandbox)
+name: Deploy to Modal (ai-inferbox Sandbox - Stable)
 
 on:
-  workflow_dispatch:          # 手動觸發
+  workflow_dispatch:
   schedule:
-    - cron: '38 18 * * *'     # UTC 每天 18:38（北京時間次日 02:38）
+    - cron: '38 18 * * *'     # UTC 每天 18:38（北京時間約次日 02:38）
+
+permissions:
+  contents: write             # 只給 push time.txt 需要的權限
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 8        # 縮短 timeout，夠用即可
-
-    env:
-      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      MODAL_CONFIG_DIR: /home/runner/.modal
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -22,30 +20,43 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'      # 建議升級到 3.11 或 3.12
+          python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Modal SDK
-        run: pip install --no-cache-dir --upgrade "modal>=1.4.0"
+      - name: Install Modal SDK (固定版本)
+        run: pip install --no-cache-dir "modal==1.4.0"
 
       - name: Check Modal version
-        run: python -c "import modal; print('Modal version:', modal.__version__)"
+        run: python -c "import modal; print('Modal SDK version:', modal.__version__)"
 
-      - name: Inject Modal Token
+      # ✅ Modal 認證（最穩定寫法）
+      - name: Setup Modal Authentication
         run: |
-          mkdir -p $MODAL_CONFIG_DIR
-          cat > $MODAL_CONFIG_DIR/token.toml << EOF
-          [default]
-          token_id = "$MODAL_TOKEN_ID"
-          token_secret = "$MODAL_TOKEN_SECRET"
-          EOF
-          echo "✅ Modal token configured"
-
-      - name: Run Deployment (Create new Sandbox + Terminate old ones)
-        run: python deploy.py --sandbox
+          modal token set \
+            --token-id "${{ secrets.MODAL_TOKEN_ID }}" \
+            --token-secret "${{ secrets.MODAL_TOKEN_SECRET }}"
+          echo "✅ Modal token set successfully"
         env:
-          PYTHONUNBUFFERED: 1          # 讓 log 即時輸出
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
 
+      # Debug（建議暫時保留，確認 token 長度正常）
+      - name: Debug Token Length
+        run: |
+          echo "MODAL_TOKEN_ID length: ${#MODAL_TOKEN_ID}"
+          echo "MODAL_TOKEN_SECRET length: ${#MODAL_TOKEN_SECRET}"
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+
+      # 🚀 核心部署步驟（新建 Sandbox + 自動終止舊 Sandbox）
+      - name: Run Deployment (New Sandbox + Terminate Old)
+        run: python deploy.py --sandbox
+        continue-on-error: false     # 如果部署失敗就讓 workflow 失敗
+        env:
+          PYTHONUNBUFFERED: 1
+
+      # 📝 更新時間檔並 push（保持 repository 活躍）
       - name: Update deployment time
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -54,22 +65,22 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           CURRENT_TIME=$(date +'%Y-%m-%d %H:%M:%S UTC')
-          echo "Deployment completed at: $CURRENT_TIME" > time.txt
-          echo "Sandbox App: ai-inferbox" >> time.txt
+          echo "Last successful deployment: $CURRENT_TIME" > time.txt
+          echo "App: ai-inferbox (Sandbox Mode)" >> time.txt
 
           git add time.txt
 
           if git diff --cached --quiet; then
             echo "No changes to time.txt"
           else
-            git commit -m "⏱️ Update deployment time: $CURRENT_TIME"
+            git commit -m "⏱️ Deployment update: $CURRENT_TIME"
             git push origin HEAD:${{ github.ref_name }}
             echo "✅ time.txt updated and pushed"
           fi
 
       - name: Deployment Summary
         run: |
-          echo "🎉 Deployment finished successfully!"
-          echo "App Name: ai-inferbox"
-          echo "Schedule: Daily at UTC 18:38"
-          echo "Check Modal Dashboard: https://modal.com/apps"
+          echo "🎉 Workflow completed!"
+          echo "App: ai-inferbox"
+          echo "Mode: Sandbox (daily restart)"
+          echo "Check dashboard: https://modal.com/apps"
